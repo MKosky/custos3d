@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- Custos 3D, versão web: HTML + JavaScript, sem servidor. Os dados ficam no navegador de cada pessoa
+     (SQLite via sql.js, guardado no IndexedDB). -->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Custos 3D</title>
+    <link rel="icon" href="assets/icone.png" />
+    <link rel="stylesheet" href="estilo.css" />
+    <script>
+      // Tema salvo (js/tema.js grava aqui): aplicado antes de tudo para a página não piscar com a cor padrão
+      try {
+        const t = JSON.parse(localStorage.getItem("custos3d-tema"));
+        const escuro = t.modo === "escuro" || (t.modo === "auto" && !matchMedia("(prefers-color-scheme: light)").matches);
+        document.documentElement.dataset.tema = escuro ? "escuro" : "claro";
+        for (const [k, v] of Object.entries(escuro ? t.escuro : t.claro)) document.documentElement.style.setProperty("--" + k, v);
+      } catch { /* primeira visita: cores padrão do estilo.css */ }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/sql.js@1.15.2/dist/sql-wasm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.9/dist/jspdf.plugin.autotable.min.js"></script>
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <header>
+      <a class="marca" href="#/"><img src="assets/icone.png" alt="" /> Custos 3D</a>
+      <nav>
+        <a href="#/">Orçamentos</a>
+        <a href="#/filamentos">Filamentos</a>
+        <a href="#/parametros">Parâmetros</a>
+        <a href="#/marca">Minha marca</a>
+        <a href="#/backup">Exportar / importar</a>
+      </nav>
+    </header>
+    <div id="aviso" role="status" aria-live="polite"></div>
+    <main id="pagina"><p class="carregando">Carregando…</p></main>
+  </body>
+</html>

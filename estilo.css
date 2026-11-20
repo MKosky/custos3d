@@ -1,0 +1,99 @@
+/* Cores padrão (roxo da logo). js/tema.js troca fundo, texto, botões e links pelo tema escolhido em Minha marca
+   e marca data-tema="escuro|claro" no <html>; erro, alerta e ok só mudam com o modo. */
+:root {
+  --fundo: #120e1a; --painel: #1c1726; --borda: #2f2840; --texto: #e8e2f4; --fraco: #a79fba;
+  --primaria: #8b52d6; --primaria-texto: #fff; --link: #b794f4; --erro: #f26b63; --alerta: #e8b04b; --ok: #4fb8a8;
+  color-scheme: dark;
+}
+:root[data-tema="claro"] { --erro: #c62828; --alerta: #9a6700; --ok: #1e7f5c; color-scheme: light; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-tema]) { --fundo: #f7f5fb; --painel: #fff; --borda: #e2dcef; --texto: #1e1a26; --fraco: #645f6e;
+          --primaria: #621da6; --link: #621da6; --erro: #c62828; --alerta: #9a6700; --ok: #1e7f5c; color-scheme: light; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fundo); color: var(--texto); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; }
+a { color: var(--link); }
+header { display: flex; align-items: center; gap: 24px; padding: 10px 24px; background: var(--painel);
+         border-bottom: 1px solid var(--borda); position: sticky; top: 0; z-index: 2; }
+.marca { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; color: var(--texto);
+         text-decoration: none; white-space: nowrap; }
+.marca img { width: 28px; height: 28px; }
+nav { display: flex; gap: 4px; overflow-x: auto; }
+nav a { padding: 6px 12px; border-radius: 8px; color: var(--fraco); text-decoration: none; white-space: nowrap; }
+nav a:hover { color: var(--texto); }
+nav a.ativo { background: var(--fundo); color: var(--texto); }
+main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+h1 { font-size: 28px; margin: 0 0 4px; }
+h2 { font-size: 18px; margin: 28px 0 8px; }
+.fraco, .ajuda { color: var(--fraco); }
+.ajuda { font-size: 13px; margin: 2px 0 0; }
+.painel { background: var(--painel); border: 1px solid var(--borda); border-radius: 12px; padding: 16px; }
+
+/* formulários */
+.grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px 16px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--fraco); }
+label.caixa { flex-direction: row; align-items: center; gap: 8px; color: var(--texto); font-size: 15px; }
+input, select, textarea { font: inherit; color: var(--texto); background: var(--fundo); border: 1px solid var(--borda);
+                          border-radius: 8px; padding: 7px 10px; width: 100%; min-width: 0; }
+input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; padding: 0; flex: none; accent-color: var(--link); }
+input[type="color"] { padding: 2px; height: 38px; width: 64px; }
+/* foco e contornos usam --link, que o tema garante legível sobre fundo e painel (a --primaria pode ser clara demais) */
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--link); outline-offset: 1px; }
+button:focus-visible, .botao:focus-visible, .soltar:focus-visible, a:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+input:disabled, select:disabled, textarea:disabled { opacity: .6; }
+textarea { min-height: 72px; resize: vertical; }
+button, .botao { font: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px;
+                 border: 1px solid var(--borda); background: var(--painel); color: var(--texto); cursor: pointer;
+                 text-decoration: none; }
+button:hover, .botao:hover { border-color: var(--link); }
+button.primario, .botao.primario { background: var(--primaria); border-color: var(--link); color: var(--primaria-texto); }
+button.perigo { color: var(--erro); }
+.acoes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+/* tabelas */
+.rolagem { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--borda); vertical-align: middle; }
+th { font-size: 13px; color: var(--fraco); font-weight: 600; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr.subtotal td { font-weight: 700; }
+tr.clicavel { cursor: pointer; }
+tr.clicavel:hover td { background: var(--fundo); }
+.mini { width: 56px; height: 56px; object-fit: contain; border-radius: 6px; background: #fff1; display: block; }
+.bolinha { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 1px solid #8886;
+           vertical-align: -2px; margin-right: 6px; }
+.etiqueta { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--borda); white-space: nowrap; }
+
+/* orçamento */
+.editor { display: grid; grid-template-columns: 220px 1fr; gap: 24px; }
+.editor .capa { width: 100%; border-radius: 12px; background: #fff1; }
+.preco { font-size: 36px; font-weight: 700; margin: 4px 0; }
+.custo { display: grid; grid-template-columns: 3fr 2fr; gap: 24px; align-items: start; }
+.alerta { border-left: 3px solid var(--alerta); padding: 8px 12px; background: var(--painel); border-radius: 6px;
+          margin: 8px 0; font-size: 14px; }
+.soltar { border: 2px dashed var(--borda); border-radius: 12px; padding: 28px; text-align: center; cursor: pointer;
+          color: var(--fraco); margin: 16px 0; }
+.soltar.sobre, .soltar:hover { border-color: var(--link); color: var(--texto); }
+iframe.pdf { width: 100%; height: 640px; border: 1px solid var(--borda); border-radius: 12px; background: #fff; }
+
+#aviso { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 9; max-width: min(560px, 92vw); }
+#aviso div { background: var(--painel); border: 1px solid var(--borda); border-left: 4px solid var(--ok);
+             padding: 10px 16px; border-radius: 8px; margin-top: 8px; box-shadow: 0 4px 16px #0005; }
+#aviso div.erro { border-left-color: var(--erro); }
+
+@media (max-width: 720px) {
+  header { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 16px; }
+  main { padding: 16px; }
+  .editor, .custo { grid-template-columns: 1fr; }
+  .editor .capa { max-width: 220px; }
+}
+
+/* tema do site (Minha marca) */
+.amostras { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.amostra { width: 40px; height: 40px; padding: 0; border-radius: 50%; border: 2px solid var(--borda); justify-content: center; }
+.amostra[aria-pressed="true"] { outline: 3px solid var(--texto); outline-offset: 2px; }
+.amostra:focus-visible { outline: 3px solid var(--link); outline-offset: 6px; }
+.amostra.marca { width: auto; padding: 0 14px 0 6px; border-radius: 99px; gap: 8px; }
+.amostra.marca span { width: 26px; height: 26px; border-radius: 50%; border: 1px solid #8886; }
+.modos { display: flex; gap: 8px; flex-wrap: wrap; }
+.modos label.caixa { border: 1px solid var(--borda); border-radius: 8px; padding: 6px 12px; }

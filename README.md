@@ -4,7 +4,7 @@
 
 **Descubra quanto custa cada impressão 3D, cobre o preço certo e envie orçamentos em PDF com a sua marca.**
 
-[![Abrir o app](https://img.shields.io/badge/ABRIR%20O%20APP-mkosky.github.io-7A3FC1?style=for-the-badge)](https://mkosky.github.io/custos3d/)
+[![Abrir o app](https://img.shields.io/badge/ABRIR%20O%20APP-mkosky.github.io-7A3FC1?style=for-the-badge)](https://mkosky.github.io/minha-calculadora-3d/)
 
 ![100% no navegador](https://img.shields.io/badge/100%25-no%20navegador-2F6FDB?style=flat-square)
 ![Sem cadastro](https://img.shields.io/badge/sem-cadastro-1E9E6A?style=flat-square)

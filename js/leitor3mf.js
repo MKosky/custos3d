@@ -1,4 +1,4 @@
-// Leitura do .gcode.3mf do Bambu Studio.
+// Leitura do .gcode.3mf (arquivo de placa fatiada com o G-code dentro).
 // O .3mf é um zip: slice_info.config (tempo, peso e filamentos por placa), project_settings.config
 // (perfis), 3dmodel.model (título, designer, licença) e as miniaturas PNG. JSZip vem do index.html.
 
@@ -37,7 +37,7 @@ export async function ler3mf(file) {
 
   const info = await texto("Metadata/slice_info.config");
   if (!info)
-    throw new ArquivoNaoFatiado(`${file.name} não tem dados de fatiamento. No Bambu Studio, fatie o projeto e ` +
+    throw new ArquivoNaoFatiado(`${file.name} não tem dados de fatiamento: só arquivos .gcode.3mf são aceitos. No fatiador, fatie o projeto e ` +
       "exporte com 'Exportar arquivo de placa fatiada' (.gcode.3mf).");
 
   let perfis = [];

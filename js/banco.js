@@ -134,12 +134,13 @@ const EMBALAGENS_INICIAIS = [["Nenhuma", 0], ["Chaveiro", 0.7], ["Saco", 2]];
 export const CAMPOS_ORCAMENTO = ["nome", "embalagem_id", "unidades", "perc_lucro", "obs", "obs_cliente",
   "validade_dias", "prazo_dias", "cliente", "cliente_contato", "mao_obra_min", "dificuldade", "pecas_compradas",
   "marketplace", "vendedor", "qtd_pedido"];
-export const CAMPOS_MARCA = { nome: "Nome da empresa", documento: "CNPJ ou CPF", instagram: "Instagram",
+export const CAMPOS_MARCA = { nome: "Nome da marca", documento: "CNPJ ou CPF", instagram: "Instagram",
   whatsapp: "WhatsApp / telefone", email: "E-mail", site: "Site", local: "Cidade / endereço" };
 export const COR_PADRAO = "#621DA6";
 
 let SQL, db, timer, conexao, avisouFalha = false;
 // Outra aba gravou: esta recarrega para não gravar por cima com dados velhos (se não tiver nada pendente)
+// Os nomes internos "custos3d" (IndexedDB, canal, cache do tema) ficam: trocar apagaria os dados de quem já usa
 const canal = globalThis.BroadcastChannel ? new BroadcastChannel("custos3d") : null;
 if (canal) canal.onmessage = () => !timer && location.reload();
 export const ehHex = (c) => /^#[0-9a-f]{6}$/i.test(c ?? "");
@@ -351,7 +352,7 @@ export function criarOrcamento(arq) {
 }
 
 export const listarOrcamentos = () =>
-  linhas(`SELECT id, criado_em, nome, cliente, status, pdf_em, capa FROM orcamentos ORDER BY id DESC`);
+  linhas(`SELECT id, criado_em, nome, cliente, status, venda, pdf_em, capa FROM orcamentos ORDER BY id DESC`);
 
 export function carregarOrcamento(id) {
   const orc = um("SELECT * FROM orcamentos WHERE id = ?", [id]);
@@ -403,6 +404,161 @@ export function resultadoAtual(orc, p = lerParametros(), rolos = listarRolos()) 
 export const salvarPdf = (id, pdf, preco) =>
   rodar("UPDATE orcamentos SET pdf_em = ?, pdf_cliente = ?, preco_enviado = ? WHERE id = ?", [agora(), pdf, preco, id]);
 
+/** Quantas vezes a placa é impressa para o pedido: 20 chaveiros com 6 por placa = 4. */
+export const impressoes = (orc) => Math.ceil(quantidade(orc) / Math.max(parseInt(orc.unidades) || 1, 1));
+export const placasIncluidas = (orc) => orc.placas.filter((pl) => pl.incluir);
+const linhasIncluidas = (orc) => {
+  const indices = new Set(placasIncluidas(orc).map((pl) => pl.indice));
+  return orc.linhas.filter((l) => indices.has(l.placa));
+};
+
+/** Gramas que cada rolo vai gastar no pedido inteiro: {rolo_id: gramas}. Cor sem rolo não entra. */
+export function consumoPorRolo(orc) {
+  const consumo = {};
+  for (const l of linhasIncluidas(orc)) if (l.rolo_id != null) consumo[l.rolo_id] = (consumo[l.rolo_id] || 0) + l.gramas * impressoes(orc);
+  return consumo;
+}
+
+// ---------------------------------------------------------------- estoque: impressão e perdas
+/** Baixa o filamento dos rolos (todas as impressões do pedido) e congela os valores calculados agora. */
+export function confirmarImpressao(id) {
+  const orc = carregarOrcamento(id);
+  if (orc.status !== "orcamento") throw new Error("Só orçamentos em aberto podem ser confirmados.");
+  const linhasOrc = linhasIncluidas(orc);
+  if (!placasIncluidas(orc).length) throw new Error("Nenhuma placa incluída.");
+  if (linhasOrc.some((l) => l.rolo_id == null))
+    throw new Error("Escolha o rolo de todas as cores das placas incluídas antes de confirmar.");
+  const p = lerParametros(), rolos = listarRolos(), [r] = resultadoAtual(orc, p, rolos);
+  const vezes = impressoes(orc), data = agora();
+  const congelado = { resultado: r, parametros: p, rolos: Object.fromEntries(rolos
+    .filter((x) => linhasOrc.some((l) => l.rolo_id === x.id)).map((x) => [x.id, { preco_g: x.preco_g, descricao: rotuloRolo(x) }])) };
+  db.exec("BEGIN");
+  try {
+    for (const l of linhasOrc)
+      rodar("INSERT INTO movimentos (rolo_id, data, gramas, tipo, orcamento_id, obs) VALUES (?, ?, ?, 'impressao', ?, ?)",
+            [l.rolo_id, data, -l.gramas * vezes, id, `Placa ${l.placa}${vezes > 1 ? ` × ${vezes}` : ""}`]);
+    rodar("UPDATE orcamentos SET status = 'impresso', impresso_em = ?, resultado_json = ? WHERE id = ?",
+          [data, JSON.stringify(congelado), id]);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+
+/** Devolve o filamento aos rolos e reabre o orçamento. */
+export function desfazerImpressao(id) {
+  rodar("DELETE FROM movimentos WHERE orcamento_id = ? AND tipo = 'impressao'", [id]);
+  rodar("UPDATE orcamentos SET status = 'orcamento', impresso_em = NULL, resultado_json = NULL WHERE id = ?", [id]);
+}
+
+/** Impressão que falhou, purga, teste de cor: material que saiu sem virar produto. */
+export const registrarPerda = (roloId, gramas, obs) =>
+  rodar("INSERT INTO movimentos (rolo_id, data, gramas, tipo, obs) VALUES (?, ?, ?, 'perda', ?)",
+        [roloId, agora(), -Math.abs(gramas), obs || "Perda"]);
+
+/** Perdas de um mês ("2026-11") em gramas e em R$, ao preço de cada rolo. */
+export function perdasDoMes(mes) {
+  const r = um(`SELECT COALESCE(-SUM(m.gramas), 0) AS g, COALESCE(-SUM(m.gramas * r.preco_pago / r.peso_inicial_g), 0) AS valor
+                FROM movimentos m JOIN rolos r ON r.id = m.rolo_id WHERE m.tipo = 'perda' AND substr(m.data, 1, 7) = ?`, [mes]);
+  return { gramas: r.g, valor: r.valor };
+}
+
+// ---------------------------------------------------------------- vendas
+/** Peças e valor que uma venda nova propõe: a quantidade do pedido e o preço do último PDF enviado (ou o atual),
+ *  sem a comissão de vendedor (ela não entra para você). */
+export function vendaPrevista(orc) {
+  const [r, p] = resultadoAtual(orc);
+  let preco = orc.preco_enviado || r.preco;
+  if (orc.vendedor) preco *= 1 - p.comissao_vendedor;
+  return [quantidade(orc), preco * quantidade(orc)];
+}
+
+/** Mais uma venda do orçamento. O custo por peça fica congelado agora. */
+export function registrarVenda(id, qtd, valor, data, canal) {
+  const [r] = resultadoAtual(carregarOrcamento(id));
+  rodar("INSERT INTO vendas (orcamento_id, data, qtd, valor, canal, custo_unit) VALUES (?, ?, ?, ?, ?, ?)",
+        [id, data, Math.max(parseInt(qtd) || 1, 1), valor, canal || "Direto", r.custo_geral]);
+  rodar("UPDATE orcamentos SET venda = 1 WHERE id = ?", [id]);
+}
+export const vendasDoOrcamento = (id) =>
+  linhas("SELECT id, data, qtd, valor, canal, custo_unit FROM vendas WHERE orcamento_id = ? ORDER BY data, id", [id]);
+
+/** Apaga uma venda. Sem nenhuma venda, o orçamento volta para "sem resposta". */
+export function apagarVenda(vendaId) {
+  const v = um("SELECT orcamento_id FROM vendas WHERE id = ?", [vendaId]);
+  if (!v) return;
+  rodar("DELETE FROM vendas WHERE id = ?", [vendaId]);
+  rodar("UPDATE orcamentos SET venda = NULL WHERE id = ? AND NOT EXISTS (SELECT 1 FROM vendas WHERE orcamento_id = ?)",
+        [v.orcamento_id, v.orcamento_id]);
+}
+
+/** Não vendeu (0) ou sem resposta (null). Com venda registrada, recusa: um clique não apaga uma venda. */
+export function responderVenda(id, resposta) {
+  if (vendasDoOrcamento(id).length) throw new Error("Este orçamento tem venda registrada. Apague as vendas antes.");
+  rodar("UPDATE orcamentos SET venda = ? WHERE id = ?", [resposta, id]);
+}
+
+/** Todas as vendas, com o custo congelado e o lucro de cada uma. */
+export const listarVendas = () => linhas(
+  `SELECT v.id, v.orcamento_id, o.nome, o.cliente, v.data, v.canal, v.qtd, v.valor,
+          v.qtd * v.custo_unit AS custo, v.valor - v.qtd * v.custo_unit AS lucro
+   FROM vendas v JOIN orcamentos o ON o.id = v.orcamento_id ORDER BY v.data DESC, v.id DESC`);
+
+/** Conversão: orçamentos vendidos sobre os que tiveram resposta (vendeu ou não vendeu). */
+export const conversao = () => um("SELECT COUNT(CASE WHEN venda = 1 THEN 1 END) AS vendidos, COUNT(venda) AS respondidos FROM orcamentos");
+
+// ---------------------------------------------------------------- propostas
+export function criarProposta(ids, { cliente, cliente_contato, validade_dias, prazo_dias, obs_cliente }) {
+  if (!ids.length) throw new Error("Escolha pelo menos um orçamento.");
+  return rodar(`INSERT INTO propostas (criado_em, cliente, cliente_contato, orcamentos, validade_dias, prazo_dias, obs_cliente)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
+               [agora(), cliente, cliente_contato, JSON.stringify(ids.map(Number)), validade_dias, prazo_dias, obs_cliente]);
+}
+export function carregarProposta(id) {
+  const prop = um("SELECT * FROM propostas WHERE id = ?", [id]);
+  if (prop) prop.orcamentos = JSON.parse(prop.orcamentos || "[]");
+  return prop;
+}
+export const listarPropostas = () => linhas("SELECT id, criado_em, cliente, orcamentos, total, pdf_em FROM propostas ORDER BY id DESC");
+/** precos: {orçamento: preço por peça} que foram no PDF, guardados como preço enviado de cada orçamento. */
+export function salvarPdfProposta(id, pdf, total, precos) {
+  rodar("UPDATE propostas SET pdf = ?, total = ?, pdf_em = ? WHERE id = ?", [pdf, total, agora(), id]);
+  for (const [orc, preco] of Object.entries(precos)) rodar("UPDATE orcamentos SET preco_enviado = ? WHERE id = ?", [preco, orc]);
+}
+export const excluirProposta = (id) => rodar("DELETE FROM propostas WHERE id = ?", [id]);
+
+// ---------------------------------------------------------------- previsão de compra
+/** Por tipo e cor: saldo dos rolos ativos, o já vendido e não impresso (comprometido), consumo médio por dia nos
+ *  últimos `dias`, quanto dura o disponível e se é hora de comprar (dura menos de 30 dias ou fica abaixo do alerta). */
+export function previsaoEstoque(dias = 90) {
+  const alerta = lerParametros().alerta_estoque_g;
+  const COR = "COALESCE(NULLIF(cor_nome, ''), cor_hex)";  // rolo sem nome de cor agrupa pelo hex
+  const grupos = {};
+  const grupo = (tipo, cor, hex) => (grupos[`${tipo}|${cor}`] ??= { tipo, cor, hex, rolos: 0, saldo: 0, consumo: 0, comprometido: 0 });
+  for (const s of linhas(`SELECT tipo, ${COR} AS cor, MIN(cor_hex) AS hex, COUNT(*) AS rolos, SUM(MAX(saldo_g, 0)) AS saldo
+                          FROM v_rolos WHERE ativo = 1 GROUP BY 1, 2`))
+    Object.assign(grupo(s.tipo, s.cor, s.hex), { rolos: s.rolos, saldo: s.saldo });
+  const desde = new Date(Date.now() - dias * 864e5).toISOString().slice(0, 19);
+  for (const c of linhas(`SELECT r.tipo, ${COR.replace(/cor_/g, "r.cor_")} AS cor, MIN(r.cor_hex) AS hex, -SUM(m.gramas) AS g
+                          FROM movimentos m JOIN rolos r ON r.id = m.rolo_id
+                          WHERE m.tipo IN ('impressao', 'perda') AND m.data >= ? GROUP BY 1, 2`, [desde]))
+    grupo(c.tipo, c.cor, c.hex).consumo = c.g;
+  // shortcut: cor sem rolo escolhido no orçamento não entra no comprometido (não dá para saber de qual rolo sai)
+  for (const l of linhas(`SELECT r.tipo, ${COR.replace(/cor_/g, "r.cor_")} AS cor, r.cor_hex AS hex, l.gramas, o.unidades, o.qtd_pedido
+                          FROM linhas_filamento l JOIN placas p ON p.id = l.placa_id JOIN orcamentos o ON o.id = p.orcamento_id
+                          JOIN rolos r ON r.id = l.rolo_id WHERE o.venda = 1 AND o.status = 'orcamento' AND p.incluir = 1`))
+    grupo(l.tipo, l.cor, l.hex).comprometido += l.gramas * impressoes(l);
+  // Com pouco histórico, a média usa os dias desde a primeira saída (mínimo 7, para não exagerar)
+  const primeira = um("SELECT MIN(data) AS d FROM movimentos WHERE tipo IN ('impressao', 'perda')").d;
+  const periodo = primeira ? Math.max(7, Math.min(dias, Math.floor((Date.now() - new Date(primeira)) / 864e5) + 1)) : dias;
+  return Object.values(grupos).map((g) => {
+    const disponivel = g.saldo - g.comprometido, porDia = g.consumo / periodo;
+    const diasRestantes = porDia > 0 ? Math.max(disponivel, 0) / porDia : null;
+    return { ...g, disponivel, porDia, diasRestantes, comprar: (diasRestantes !== null && diasRestantes < 30) || disponivel < alerta };
+  }).sort((a, b) => (a.diasRestantes ?? Infinity) - (b.diasRestantes ?? Infinity));
+}
+
 // ---------------------------------------------------------------- backup
 /** O .db para levar a outro navegador. A data vai junto, para o lembrete de exportar contar a partir dela. */
 export function exportar() {
@@ -428,7 +584,7 @@ function limparOrfaos() {
 
 /** Troca o banco atual por um .db exportado deste app. Só troca depois de conferir; se algo falhar, fica o atual. */
 export async function restaurar(bytes) {
-  const invalido = () => new Error("Esse arquivo não é um backup do Custos 3D.");
+  const invalido = () => new Error("Esse arquivo não é um backup da Minha Calculadora 3D.");
   let novo;
   try {
     novo = new SQL.Database(bytes);
@@ -450,4 +606,15 @@ export async function restaurar(bytes) {
   }
   antigo.close();
   await persistir(true);
+}
+
+/** Zera o site neste navegador: banco novo (só com os valores padrão), sem pasta escolhida e sem tema salvo. */
+export async function apagarTudo() {
+  const antigo = db;
+  db = new SQL.Database();
+  criarTabelas();
+  antigo.close();
+  await persistir(true);
+  for (const chave of ["pasta", "hashes_pasta", "nao_fatiados"]) await idb("readwrite", (s) => s.delete(chave));
+  try { localStorage.removeItem("custos3d-tema"); } catch { /* sem localStorage: nada a apagar */ }
 }

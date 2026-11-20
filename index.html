@@ -1,11 +1,12 @@
 <!doctype html>
-<!-- Custos 3D, versão web: HTML + JavaScript, sem servidor. Os dados ficam no navegador de cada pessoa
+<!-- Minha Calculadora 3D: HTML + JavaScript, sem servidor. Os dados ficam no navegador de cada pessoa
      (SQLite via sql.js, guardado no IndexedDB). -->
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Custos 3D</title>
+    <title>Minha Calculadora 3D</title>
+    <meta name="description" content="Calcule o custo e o preço das suas impressões 3D a partir do .gcode.3mf e gere orçamentos em PDF com a sua marca." />
     <link rel="icon" href="assets/icone.png" />
     <link rel="stylesheet" href="estilo.css" />
     <script>
@@ -25,9 +26,13 @@
   </head>
   <body>
     <header>
-      <a class="marca" href="#/"><img src="assets/icone.png" alt="" /> Custos 3D</a>
+      <a class="marca" href="#/"><img src="assets/icone.png" alt="" /> Minha Calculadora 3D</a>
+      <span id="nome-marca" aria-label="Sua marca"></span>
       <nav>
-        <a href="#/">Orçamentos</a>
+        <a href="#/">Início</a>
+        <a href="#/orcamentos">Orçamentos</a>
+        <a href="#/propostas">Propostas</a>
+        <a href="#/vendas">Vendas</a>
         <a href="#/filamentos">Filamentos</a>
         <a href="#/parametros">Parâmetros</a>
         <a href="#/marca">Minha marca</a>

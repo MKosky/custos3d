@@ -1,10 +1,10 @@
-// Telas do Custos 3D. Rotas por hash: #/ (orçamentos), #/orcamento/ID, #/filamentos, #/parametros,
-// #/marca, #/backup. Cada tela monta o HTML e liga os eventos; os dados vão direto para o banco (banco.js).
+// Telas da Minha Calculadora 3D. Rotas por hash: #/ (início), #/orcamentos, #/orcamento/ID, #/propostas, #/vendas,
+// #/filamentos, #/parametros, #/marca, #/backup. Cada tela monta o HTML e liga os eventos; os dados vão direto para o banco (banco.js).
 import * as banco from "./banco.js";
 import { brl, composicao, dataBR, horas, num, valorDificuldade } from "./custos.js";
 import { nomeDaCor } from "./cores.js";
 import { ArquivoNaoFatiado, ler3mf, sha1 } from "./leitor3mf.js";
-import { pdfCliente, pdfExemplo } from "./pdf.js";
+import { pdfCliente, pdfExemplo, pdfInterno, pdfProposta } from "./pdf.js";
 import { TEMAS, aplicarTema } from "./tema.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -12,6 +12,9 @@ const pagina = $("#pagina");
 // Todo valor vindo do banco ou de arquivo passa por h() antes de entrar no HTML: um .db importado pode trazer qualquer coisa
 const h = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const corSegura = (c) => (banco.ehHex(c) ? c : "#808080");  // cor em style=: só hex
+const CANAIS = ["Direto", "Instagram", "WhatsApp", "Shopee", "Mercado Livre", "Feira", "Outro"];
+const mesAtual = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+const hojeIso = () => { const d = new Date(); return `${mesAtual()}-${String(d.getDate()).padStart(2, "0")}`; };
 
 // shortcut: as URLs das imagens não são liberadas (URL.revokeObjectURL); pesa só com centenas de orçamentos numa visita
 const urlDe = (bytes, tipo = "image/png") => (bytes ? URL.createObjectURL(new Blob([bytes], { type: tipo })) : "");
@@ -48,7 +51,7 @@ function telaOrcamentos() {
   pagina.innerHTML = `
     <h1>Orçamentos</h1>
     ${lembreteExportar()}
-    <p class="fraco">Arraste os arquivos fatiados do Bambu Studio (<code>.gcode.3mf</code>). Cada arquivo vira um orçamento.</p>
+    <p class="fraco">Aceita <strong>somente arquivos <code>.gcode.3mf</code></strong> (o arquivo de placa fatiada que o seu fatiador exporta). Cada arquivo vira um orçamento.</p>
     <label class="soltar" id="soltar" tabindex="0" role="button" aria-label="Escolher arquivos .gcode.3mf para importar">
       <strong>Arraste os .gcode.3mf aqui</strong> ou clique para escolher
       <input type="file" accept=".3mf" multiple hidden />
@@ -63,7 +66,7 @@ function telaOrcamentos() {
           <td>${o.capa ? `<img class="mini" src="${urlDe(o.capa)}" alt="" />` : ""}</td><td>${h(o.id)}</td>
           <td><a href="#/orcamento/${h(o.id)}">${h(o.nome) || "(sem nome)"}</a></td><td>${h(o.cliente)}</td>
           <td>${h(dataBR(o.criado_em))}</td><td class="n">${preco}</td>
-          <td><span class="etiqueta">${STATUS[o.status] || h(o.status)}${o.pdf_em ? " · PDF" : ""}</span></td></tr>`;
+          <td><span class="etiqueta">${STATUS[o.status] || h(o.status)}${o.pdf_em ? " · PDF" : ""}${o.venda === 1 ? " · Vendido" : ""}</span></td></tr>`;
       }).join("")}</tbody></table></div>`
       : `<p class="painel">Nenhum orçamento ainda. Comece cadastrando seus rolos em <a href="#/filamentos">Filamentos</a>
          (sem rolo, o material usa o preço padrão de ${brl(p.preco_kg_padrao)}/kg) e arraste um arquivo aqui em cima.</p>`}`;
@@ -174,7 +177,7 @@ async function listarPasta(el, pasta) {
         const hash = vistos[chave] = cache[chave] || (await sha1(new Uint8Array(await file.arrayBuffer())));
         itens.push({ file, hash, orc: banco.orcamentoDoArquivo(hash), ignorado: naoFatiados.has(hash) });
       } catch {
-        // Arquivo ainda sendo gravado pelo Bambu Studio, bloqueado ou só na nuvem: aparece, mas não derruba a lista
+        // Arquivo ainda sendo gravado pelo fatiador, bloqueado ou só na nuvem: aparece, mas não derruba a lista
         itens.push({ file: { name: entrada.name, lastModified: 0 }, ilegivel: true });
       }
     }
@@ -253,9 +256,9 @@ function telaOrcamento(id) {
                   orc.arquivo && `Arquivo: ${orc.arquivo}`].filter(Boolean);
 
   pagina.innerHTML = `
-    <p><a href="#/">← Orçamentos</a></p>
+    <p><a href="#/orcamentos">← Orçamentos</a></p>
     <h1>#${h(orc.id)} ${h(orc.nome)}</h1>
-    ${travado ? `<p class="alerta">Impresso em ${h(dataBR(orc.impresso_em))}: os valores estão congelados. Para mudar, duplique o orçamento importando o arquivo de novo.</p>` : ""}
+    ${travado ? `<p class="alerta">Impresso em ${h(dataBR(orc.impresso_em))}: os valores estão congelados. Para mudar, use Desfazer impressão em Estoque.</p>` : ""}
     <div class="editor">
       <div>${orc.capa ? `<img class="capa" src="${urlDe(orc.capa)}" alt="Foto do modelo" />` : ""}
            <p class="ajuda">${origem.map(h).join("<br>")}</p></div>
@@ -304,7 +307,11 @@ function telaOrcamento(id) {
         <td><select data-linha="${h(l.id)}" ${dis} aria-label="Rolo da cor ${h(l.cor_hex)}">${opcoesRolo(l.rolo_id)}</select></td></tr>`).join("")}</tbody></table></div>
 
     <h2>Custo e preço</h2>
-    <div id="custo"></div>`;
+    <div id="custo"></div>
+    <h2>Estoque</h2>
+    <div id="estoque"></div>
+    <h2>Virou venda?</h2>
+    <div id="vendas"></div>`;
 
   function mostrarCusto() {
     let r, pp;
@@ -332,6 +339,7 @@ function telaOrcamento(id) {
         ${avisos.map((a) => `<p class="alerta">${h(a)}</p>`).join("")}
         <div class="acoes">
           <button class="primario" id="gerar">${orc.pdf_em ? "Gerar PDF de novo" : "Gerar PDF do cliente"}</button>
+          <button id="interno">PDF interno</button>
           ${travado ? "" : `<button class="perigo" id="excluir">Excluir orçamento</button>`}
         </div>
         ${orc.pdf_em ? `<p class="ajuda">Último PDF em ${h(dataBR(orc.pdf_em))} ${h(orc.pdf_em.slice(11, 16))}.</p>` : ""}
@@ -345,14 +353,97 @@ function telaOrcamento(id) {
       orc = banco.carregarOrcamento(id);
       mostrarCusto();
     };
+    $("#interno").onclick = () => {
+      const indices = new Set(banco.placasIncluidas(orc).map((pl) => pl.indice));
+      const filamentos = orc.linhas.filter((l) => indices.has(l.placa))
+        .map((l) => [l.placa, corSegura(l.cor_hex), l.tipo || "", l.gramas, l.rolo_id != null ? rotulos[l.rolo_id] || "-" : "Preço padrão"]);
+      const emb = embalagens.find((e) => e.id === orc.embalagem_id);
+      const situacao = travado ? `Impresso em ${dataBR(orc.impresso_em)}` : "Em aberto";
+      try {
+        const pdf = pdfInterno(orc, r, pp, filamentos, emb ? `${emb.nome} (${brl(emb.custo)})` : "Sem embalagem", situacao, banco.lerMarca());
+        baixar(pdf, `${nomeArquivo(`Orçamento ${orc.id} - ${orc.nome}`)} (interno).pdf`, "application/pdf");
+      } catch (erro) { avisar(`Não consegui gerar o PDF: ${erro.message}`, true); }
+    };
     const excluir = $("#excluir");
     if (excluir) excluir.onclick = () => {
       if (!confirm(`Excluir o orçamento #${orc.id} ${orc.nome}? Não dá para desfazer.`)) return;
-      try { banco.excluirOrcamento(orc.id); location.hash = "#/"; avisar("Orçamento excluído."); }
+      try { banco.excluirOrcamento(orc.id); location.hash = "#/orcamentos"; avisar("Orçamento excluído."); }
       catch (erro) { avisar(erro.message, true); }
     };
   }
+  // ---- estoque: o que sai de cada rolo, confirmar ou desfazer a impressão
+  function mostrarEstoque() {
+    const el = $("#estoque");
+    if (travado) {
+      el.innerHTML = `<div class="painel"><p style="margin-top:0">Impresso em ${h(dataBR(orc.impresso_em))}: o filamento já saiu dos rolos.</p>
+        <button id="desfazer">Desfazer impressão</button><p class="ajuda">Devolve o filamento aos rolos e reabre o orçamento.</p></div>`;
+      $("#desfazer").onclick = () => {
+        if (!confirm("Desfazer a impressão? O filamento volta para os rolos.")) return;
+        banco.desfazerImpressao(id); avisar("Impressão desfeita."); telaOrcamento(id);
+      };
+      return;
+    }
+    const consumo = Object.entries(banco.consumoPorRolo(orc)).map(([rid, g]) => {
+      const rolo = rolos.find((x) => x.id === Number(rid));
+      return { rotulo: rotulos[rid] || `#${rid}`, g, saldo: rolo?.saldo_g ?? 0 };
+    });
+    const semRolo = orc.linhas.some((l) => l.rolo_id == null && banco.placasIncluidas(orc).some((pl) => pl.indice === l.placa));
+    const vezes = banco.impressoes(orc);
+    el.innerHTML = `<div class="painel">
+      ${consumo.length ? `<div class="rolagem"><table><thead><tr><th>Rolo</th><th class="n">Vai usar (g)</th><th class="n">Saldo (g)</th><th class="n">Depois (g)</th></tr></thead>
+        <tbody>${consumo.map((c) => `<tr><td>${h(c.rotulo)}</td><td class="n">${num(c.g)}</td><td class="n">${num(c.saldo, 0)}</td>
+          <td class="n" style="${c.saldo - c.g < 0 ? "color:var(--erro);font-weight:700" : ""}">${num(c.saldo - c.g, 0)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${vezes > 1 ? `<p class="ajuda">O pedido usa ${vezes} impressões da placa: o consumo já está multiplicado.</p>` : ""}
+      ${semRolo ? `<p class="alerta">Escolha o rolo de todas as cores (em Filamentos, acima) para poder confirmar a impressão.</p>` : ""}
+      ${consumo.some((c) => c.saldo - c.g < 0) ? `<p class="alerta">Saldo insuficiente em algum rolo. Dá para confirmar mesmo assim; o saldo fica negativo até você pesar o rolo.</p>` : ""}
+      <div class="acoes"><button class="primario" id="confirmar" ${semRolo ? "disabled" : ""}>Confirmar impressão</button></div>
+      <p class="ajuda">Ao confirmar, o filamento sai dos rolos e os valores do orçamento ficam congelados.</p></div>`;
+    $("#confirmar").onclick = () => {
+      if (!confirm("Confirmar a impressão? O filamento sai dos rolos.")) return;
+      try { banco.confirmarImpressao(id); avisar("Impressão confirmada: estoque atualizado."); telaOrcamento(id); }
+      catch (erro) { avisar(erro.message, true); }
+    };
+  }
+
+  // ---- vendas do orçamento: várias por orçamento, com o custo congelado em cada uma
+  function mostrarVendas() {
+    const el = $("#vendas"), vendas = banco.vendasDoOrcamento(id);
+    let qtdPrev = 1, valorPrev = 0;
+    try { [qtdPrev, valorPrev] = banco.vendaPrevista(orc); } catch { /* lucro inválido: a pessoa digita */ }
+    el.innerHTML = `<div class="painel">
+      ${vendas.length ? `<div class="rolagem"><table><thead><tr><th>Data</th><th>Canal</th><th class="n">Peças</th><th class="n">Recebido</th><th class="n">Lucro</th><th></th></tr></thead>
+        <tbody>${vendas.map((v) => `<tr><td>${h(dataBR(v.data))}</td><td>${h(v.canal)}</td><td class="n">${h(v.qtd)}</td>
+          <td class="n">${brl(v.valor)}</td><td class="n">${brl(v.valor - v.qtd * v.custo_unit)}</td>
+          <td><button class="perigo" data-apagar-venda="${h(v.id)}">Apagar</button></td></tr>`).join("")}</tbody></table></div>`
+        : orc.venda === 0 ? `<p style="margin-top:0">Marcado como <strong>não vendeu</strong>. <button id="sem-resposta">Desfazer</button></p>`
+        : `<p class="fraco" style="margin-top:0">Ainda sem resposta. Registre a venda abaixo ou marque que não vendeu.</p>`}
+      <form id="nova-venda" class="grade" style="margin-top:12px">
+        <label>Peças<input name="qtd" type="number" min="1" step="1" value="${qtdPrev}" required /></label>
+        <label>Recebido (R$)<input name="valor" type="number" min="0" step="any" value="${valorPrev.toFixed(2)}" required />
+          <span class="ajuda">O que entrou para você, já sem taxas.</span></label>
+        <label>Data<input name="data" type="date" value="${hojeIso()}" required /></label>
+        <label>Canal<select name="canal">${CANAIS.map((c) => `<option>${c}</option>`).join("")}</select></label>
+      </form>
+      <div class="acoes"><button class="primario" id="registrar-venda">${vendas.length ? "Registrar outra venda" : "Vendeu: registrar venda"}</button>
+        ${vendas.length || orc.venda === 0 ? "" : `<button id="nao-vendeu">Não vendeu</button>`}</div></div>`;
+    const recarregar = () => { orc = banco.carregarOrcamento(id); mostrarVendas(); };
+    $("#registrar-venda").onclick = () => {
+      const f = $("#nova-venda");
+      if (!f.reportValidity()) return;
+      banco.registrarVenda(id, Number(f.qtd.value), parseFloat(f.valor.value) || 0, f.data.value, f.canal.value);
+      avisar("Venda registrada."); recarregar();
+    };
+    $("#nao-vendeu")?.addEventListener("click", () => { banco.responderVenda(id, 0); recarregar(); });
+    $("#sem-resposta")?.addEventListener("click", () => { banco.responderVenda(id, null); recarregar(); });
+    el.querySelectorAll("[data-apagar-venda]").forEach((b) => (b.onclick = () => {
+      if (!confirm("Apagar esta venda?")) return;
+      banco.apagarVenda(Number(b.dataset.apagarVenda)); recarregar();
+    }));
+  }
+
   mostrarCusto();
+  mostrarEstoque();
+  mostrarVendas();
 
   // Cada mudança vai direto para o banco e o custo recalcula
   pagina.onchange = (e) => {
@@ -371,6 +462,8 @@ function telaOrcamento(id) {
     orc = banco.carregarOrcamento(id);
     if (el.dataset.campo === "nome") $("h1").textContent = `#${orc.id} ${orc.nome}`;
     mostrarCusto();
+    mostrarEstoque();
+    if (["unidades", "qtd_pedido", "vendedor", "perc_lucro"].includes(el.dataset.campo)) mostrarVendas();  // muda o previsto
   };
 }
 
@@ -379,13 +472,14 @@ function telaFilamentos() {
   const rolos = banco.listarRolos(), p = banco.lerParametros();
   pagina.innerHTML = `
     <h1>Filamentos</h1>
-    <p class="fraco">Cada rolo físico é um registro com saldo próprio. Acerte o saldo pela balança com o botão Pesar.</p>
+    <p class="fraco">Cada rolo físico é um registro com saldo próprio. O saldo baixa quando você confirma uma impressão;
+       acerte pela balança com <strong>Pesar</strong> e registre falhas e purgas com <strong>Perda</strong>.</p>
     <form id="novo" class="painel"><h2 style="margin-top:0">Cadastrar rolo</h2><div class="grade">
-      <label>Marca<input name="marca" required placeholder="Bambu, Voolt..." /></label>
+      <label>Marca<input name="marca" required placeholder="Voolt, 3D Lab, Sunlu..." /></label>
       <label>Tipo<input name="tipo" required placeholder="PLA, PETG..." /></label>
       <label>Linha<input name="linha" placeholder="Basic, Matte, Silk..." /></label>
       <label>Nome da cor<input name="cor_nome" placeholder="Preto" /></label>
-      <label>Cor<input name="cor_hex" type="color" value="#000000" /><span class="ajuda">A mesma do Bambu Studio, para a sugestão acertar.</span></label>
+      <label>Cor<input name="cor_hex" type="color" value="#000000" /><span class="ajuda">A mesma do seu fatiador, para a sugestão de rolo acertar.</span></label>
       <label>Peso do rolo (g)<input name="peso_inicial_g" type="number" step="any" min="1" value="1000" required /></label>
       <label>Preço pago (R$)<input name="preco_pago" type="number" step="any" min="0" required /></label>
       <label>Data da compra<input name="data_compra" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label>
@@ -397,8 +491,9 @@ function telaFilamentos() {
         <td><span class="bolinha" style="background:${corSegura(r.cor_hex)}"></span>${h(banco.rotuloRolo(r))}</td><td>${h(r.linha)}</td>
         <td class="n" style="${r.ativo && r.saldo_g < p.alerta_estoque_g ? "color:var(--alerta);font-weight:700" : ""}">${num(r.saldo_g, 0)}</td>
         <td class="n">${num(r.preco_g * 1000)}</td>
-        <td><button data-pesar="${h(r.id)}">Pesar</button> <button data-arquivar="${h(r.id)}" data-ativo="${r.ativo ? 1 : 0}">${r.ativo ? "Arquivar" : "Reativar"}</button></td>
-      </tr>`).join("")}</tbody></table></div>` : `<p class="fraco">Nenhum rolo ainda.</p>`}`;
+        <td><button data-pesar="${h(r.id)}">Pesar</button> <button data-perda="${h(r.id)}">Perda</button> <button data-arquivar="${h(r.id)}" data-ativo="${r.ativo ? 1 : 0}">${r.ativo ? "Arquivar" : "Reativar"}</button></td>
+      </tr>`).join("")}</tbody></table></div>` : `<p class="fraco">Nenhum rolo ainda.</p>`}
+    ${previsao()}`;
 
   $("#novo").onsubmit = (e) => {
     e.preventDefault();
@@ -408,16 +503,175 @@ function telaFilamentos() {
     telaFilamentos();
   };
   pagina.onclick = (e) => {
-    const b = e.target.closest("button[data-pesar], button[data-arquivar]");
+    const b = e.target.closest("button[data-pesar], button[data-arquivar], button[data-perda]");
     if (!b) return;
     if (b.dataset.arquivar) banco.arquivarRolo(Number(b.dataset.arquivar), b.dataset.ativo !== "1");
-    else {
+    else if (b.dataset.perda) {
+      const g = parseFloat((prompt("Quantos gramas foram perdidos (falha, purga, teste)?") || "").replace(",", "."));
+      if (!(g > 0)) return;
+      banco.registrarPerda(Number(b.dataset.perda), g, prompt("Motivo (opcional):", "Impressão falhou") || "");
+      avisar("Perda registrada: ela sai do lucro do mês no Início.");
+    } else {
       const g = prompt("Quanto o filamento pesa agora, sem o carretel (g)?");
       if (g === null || isNaN(parseFloat(g.replace(",", ".")))) return;
       banco.ajustarSaldo(Number(b.dataset.pesar), parseFloat(g.replace(",", ".")));
       avisar("Saldo ajustado.");
     }
     telaFilamentos();
+  };
+}
+
+/** Tabela "Previsão de compra": por tipo e cor, quanto dura o que tem, já descontando o que foi vendido e não impresso. */
+function previsao() {
+  const linhasPrev = banco.previsaoEstoque();
+  if (!linhasPrev.length) return "";
+  return `<h2>Previsão de compra</h2>
+    <p class="ajuda">Consumo médio dos últimos 90 dias (impressões confirmadas e perdas). "Comprometido" é o que já foi vendido e ainda não impresso.</p>
+    <div class="rolagem"><table><thead><tr><th>Filamento</th><th class="n">Rolos</th><th class="n">Disponível (g)</th><th class="n">Comprometido (g)</th>
+      <th class="n">Gasto por dia (g)</th><th class="n">Dura</th><th></th></tr></thead>
+    <tbody>${linhasPrev.map((g) => `<tr><td><span class="bolinha" style="background:${corSegura(g.hex)}"></span>${h(g.tipo)} ${h(g.cor)}</td>
+      <td class="n">${h(g.rolos)}</td><td class="n">${num(g.disponivel, 0)}</td><td class="n">${num(g.comprometido, 0)}</td>
+      <td class="n">${g.porDia ? num(g.porDia, 1) : "-"}</td><td class="n">${g.diasRestantes == null ? "-" : `${num(g.diasRestantes, 0)} dias`}</td>
+      <td>${g.comprar ? `<span class="etiqueta" style="color:var(--erro);border-color:var(--erro)">Comprar</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+// ================================================================= início
+function telaInicio() {
+  const p = banco.lerParametros(), rolos = banco.listarRolos(true), orcs = banco.listarOrcamentos();
+  const mes = mesAtual(), vendas = banco.listarVendas(), doMes = vendas.filter((v) => (v.data || "").startsWith(mes));
+  const perdas = banco.perdasDoMes(mes), conv = banco.conversao();
+  const soma = (lista, f) => lista.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+  const estoque = soma(rolos, (r) => Math.max(r.saldo_g, 0));
+  const cartao = (rotulo, valor, ajuda = "") => `<div class="painel cartao"><div class="fraco">${rotulo}</div><div class="valor">${valor}</div>${ajuda ? `<p class="ajuda">${ajuda}</p>` : ""}</div>`;
+  const produtos = Object.values(vendas.reduce((acc, v) => {
+    const k = v.orcamento_id;
+    acc[k] ??= { id: k, nome: v.nome, vendas: 0, pecas: 0, recebido: 0, lucro: 0 };
+    Object.assign(acc[k], { vendas: acc[k].vendas + 1, pecas: acc[k].pecas + v.qtd, recebido: acc[k].recebido + v.valor, lucro: acc[k].lucro + v.lucro });
+    return acc;
+  }, {})).sort((a, b) => b.lucro - a.lucro).slice(0, 5);
+  const comprar = rolos.length ? banco.previsaoEstoque().filter((g) => g.comprar) : [];
+  const nome = banco.lerMarca().nome;
+  const primeiros = [
+    [rolos.length, "Cadastre seus rolos", "#/filamentos"],
+    [nome, "Coloque o nome e a logo da sua marca", "#/marca"],
+    [orcs.length, "Importe um arquivo .gcode.3mf", "#/orcamentos"],
+  ];
+  pagina.innerHTML = `
+    <h1>${nome ? `Olá, ${h(nome)}` : "Início"}</h1>
+    ${lembreteExportar()}
+    ${primeiros.some(([feito]) => !feito) ? `<div class="painel"><strong>Primeiros passos</strong><ol style="margin:8px 0 0">
+      ${primeiros.map(([feito, texto, link]) => `<li>${feito ? `<s class="fraco">${texto}</s>` : `<a href="${link}">${texto}</a>`}</li>`).join("")}</ol></div>` : ""}
+    <h2>Este mês</h2>
+    <div class="cartoes">
+      ${cartao("Recebido", brl(soma(doMes, (v) => v.valor)), `${doMes.length} venda(s), ${soma(doMes, (v) => v.qtd)} peça(s)`)}
+      ${cartao("Lucro", brl(soma(doMes, (v) => v.lucro) - perdas.valor), "Recebido − custo das peças − perdas")}
+      ${cartao("Perdas", brl(perdas.valor), `${num(perdas.gramas, 0)} g de falhas e purgas`)}
+      ${cartao("Conversão", conv.respondidos ? `${num((conv.vendidos / conv.respondidos) * 100, 0)}%` : "-", `${conv.vendidos} vendido(s) de ${conv.respondidos} com resposta`)}
+    </div>
+    <h2>Agora</h2>
+    <div class="cartoes">
+      ${cartao("Orçamentos em aberto", orcs.filter((o) => o.status === "orcamento").length)}
+      ${cartao("Filamento em estoque", `${num(estoque / 1000, 2)} kg`, `${rolos.length} rolo(s) ativo(s)`)}
+      ${cartao("Valor em estoque", brl(soma(rolos, (r) => Math.max(r.saldo_g, 0) * r.preco_g)), "Saldo × preço pago")}
+    </div>
+    ${comprar.length ? `<p class="alerta">Comprar logo: ${comprar.map((g) => `${h(g.tipo)} ${h(g.cor)}${g.diasRestantes != null ? ` (~${num(g.diasRestantes, 0)} dias)` : ""}`).join(", ")}.
+      <a href="#/filamentos">Ver previsão</a></p>` : ""}
+    ${produtos.length ? `<h2>Produtos que mais deram lucro</h2><div class="rolagem"><table>
+      <thead><tr><th>Produto</th><th class="n">Vendas</th><th class="n">Peças</th><th class="n">Recebido</th><th class="n">Lucro</th><th class="n">Margem</th></tr></thead>
+      <tbody>${produtos.map((x) => `<tr><td><a href="#/orcamento/${h(x.id)}">${h(x.nome)}</a></td><td class="n">${x.vendas}</td><td class="n">${x.pecas}</td>
+        <td class="n">${brl(x.recebido)}</td><td class="n">${brl(x.lucro)}</td><td class="n">${x.recebido > 0 ? `${num((x.lucro / x.recebido) * 100, 0)}%` : "-"}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${rolos.length ? `<h2>Rolos</h2><div class="cartoes">${rolos.map((r) => {
+      const pct = Math.max(0, Math.min(1, r.saldo_g / r.peso_inicial_g)) * 100, baixo = r.saldo_g < p.alerta_estoque_g;
+      return `<div class="painel rolo"><div><span class="bolinha" style="background:${corSegura(r.cor_hex)}"></span><strong>${h(r.tipo)} ${h(r.cor_nome)}</strong></div>
+        <div class="barra" role="img" aria-label="${num(pct, 0)}% restante"><span style="width:${pct.toFixed(1)}%;background:${corSegura(r.cor_hex)}"></span></div>
+        <div class="${baixo ? "" : "fraco"}" style="${baixo ? "color:var(--erro);font-weight:600" : ""}">${num(r.saldo_g, 0)} g de ${num(r.peso_inicial_g, 0)} g${baixo ? " · acabando" : ""}</div></div>`;
+    }).join("")}</div>` : ""}`;
+}
+
+// ================================================================= vendas
+function telaVendas() {
+  const vendas = banco.listarVendas(), soma = (f) => vendas.reduce((s, v) => s + (Number(v[f]) || 0), 0);
+  pagina.innerHTML = `
+    <h1>Vendas</h1>
+    <p class="fraco">Todas as vendas registradas nos orçamentos (em "Virou venda?"). O custo de cada uma fica congelado no dia em que foi registrada.</p>
+    ${vendas.length ? `<div class="rolagem"><table><thead><tr><th>Data</th><th>Produto</th><th>Cliente</th><th>Canal</th>
+      <th class="n">Peças</th><th class="n">Recebido</th><th class="n">Custo</th><th class="n">Lucro</th></tr></thead>
+      <tbody>${vendas.map((v) => `<tr><td>${h(dataBR(v.data))}</td><td><a href="#/orcamento/${h(v.orcamento_id)}">${h(v.nome)}</a></td>
+        <td>${h(v.cliente)}</td><td>${h(v.canal)}</td><td class="n">${h(v.qtd)}</td><td class="n">${brl(v.valor)}</td>
+        <td class="n">${brl(v.custo)}</td><td class="n">${brl(v.lucro)}</td></tr>`).join("")}
+      <tr class="subtotal"><td colspan="4">Total</td><td class="n">${soma("qtd")}</td><td class="n">${brl(soma("valor"))}</td>
+        <td class="n">${brl(soma("custo"))}</td><td class="n">${brl(soma("lucro"))}</td></tr></tbody></table></div>`
+      : `<p class="painel">Nenhuma venda ainda. Abra um orçamento em <a href="#/orcamentos">Orçamentos</a> e use "Virou venda?" no fim da página.</p>`}`;
+}
+
+// ================================================================= propostas
+function telaPropostas() {
+  const p = banco.lerParametros(), rolos = banco.listarRolos();
+  const orcs = banco.listarOrcamentos().filter((o) => o.status !== "cancelado");
+  const props = banco.listarPropostas();
+  const preco = (id) => { try { return brl(banco.resultadoAtual(banco.carregarOrcamento(id), p, rolos)[0].preco); } catch { return "-"; } };
+  pagina.innerHTML = `
+    <h1>Propostas</h1>
+    <p class="fraco">Junte vários orçamentos do mesmo cliente num PDF só, com a foto, a quantidade e o preço de cada item e o total.</p>
+    ${props.length ? `<div class="rolagem"><table><thead><tr><th>#</th><th>Cliente</th><th class="n">Itens</th><th class="n">Total</th><th>PDF</th><th></th></tr></thead>
+      <tbody>${props.map((x) => `<tr><td>${h(x.id)}</td><td>${h(x.cliente) || "-"}</td><td class="n">${JSON.parse(x.orcamentos || "[]").length}</td>
+        <td class="n">${x.total != null ? brl(x.total) : "-"}</td><td>${x.pdf_em ? h(dataBR(x.pdf_em)) : "-"}</td>
+        <td><button data-gerar="${h(x.id)}">${x.pdf_em ? "Gerar de novo" : "Gerar PDF"}</button>
+          ${x.pdf_em ? `<button data-baixar="${h(x.id)}">Baixar</button>` : ""}
+          <button class="perigo" data-excluir="${h(x.id)}">Excluir</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+    <h2>Nova proposta</h2>
+    ${orcs.length ? `<form id="nova" class="painel">
+      <p class="ajuda" style="margin-top:0">Marque os orçamentos, na ordem em que devem aparecer no PDF.</p>
+      <div class="rolagem" style="max-height:340px;overflow-y:auto"><table><tbody>${orcs.map((o) => `<tr>
+        <td><input type="checkbox" name="orc" value="${h(o.id)}" aria-label="Incluir ${h(o.nome)}" /></td>
+        <td>${o.capa ? `<img class="mini" src="${urlDe(o.capa)}" alt="" />` : ""}</td>
+        <td>#${h(o.id)} ${h(o.nome)}</td><td class="fraco">${h(o.cliente)}</td><td class="n">${preco(o.id)}</td></tr>`).join("")}</tbody></table></div>
+      <div class="grade" style="margin-top:12px">
+        <label>Cliente<input name="cliente" /></label>
+        <label>Contato do cliente<input name="cliente_contato" placeholder="WhatsApp, Instagram..." /></label>
+        <label>Validade (dias)<input name="validade_dias" type="number" min="1" step="1" placeholder="Sem validade" /></label>
+        <label>Prazo de entrega (dias)<input name="prazo_dias" type="number" min="1" step="1" placeholder="Sem prazo" /></label>
+      </div>
+      <label style="margin-top:12px">Observações para o cliente<textarea name="obs_cliente"></textarea></label>
+      <div class="acoes"><button class="primario">Criar e gerar PDF</button></div></form>`
+      : `<p class="painel">Importe arquivos em <a href="#/orcamentos">Orçamentos</a> para montar uma proposta.</p>`}`;
+
+  const gerar = (id) => {
+    const prop = banco.carregarProposta(id), marca = banco.lerMarca(), itens = [];
+    for (const oid of prop.orcamentos) {
+      const orc = banco.carregarOrcamento(oid);
+      if (!orc) return avisar(`O orçamento #${oid} desta proposta foi excluído. Crie a proposta de novo.`, true);
+      itens.push([orc, banco.resultadoAtual(orc, p, rolos)[0]]);
+    }
+    try {
+      const pdf = pdfProposta(prop, itens, marca);
+      banco.salvarPdfProposta(id, pdf, itens.reduce((s, [o, r]) => s + r.preco * banco.quantidade(o), 0),
+                              Object.fromEntries(itens.map(([o, r]) => [o.id, r.preco])));
+      baixar(pdf, `${nomeArquivo(`Proposta ${id}${prop.cliente ? ` - ${prop.cliente}` : ""}`)}.pdf`, "application/pdf");
+    } catch (erro) { return avisar(`Não consegui gerar o PDF: ${erro.message}`, true); }
+    telaPropostas();
+  };
+  const form = $("#nova");
+  if (form) form.onsubmit = (e) => {
+    e.preventDefault();
+    const ids = [...form.querySelectorAll("input[name=orc]:checked")].map((c) => Number(c.value));
+    const int = (v) => (v ? Math.max(parseInt(v) || 0, 1) : null);
+    try {
+      const id = banco.criarProposta(ids, { cliente: form.cliente.value.trim(), cliente_contato: form.cliente_contato.value.trim(),
+        validade_dias: int(form.validade_dias.value), prazo_dias: int(form.prazo_dias.value), obs_cliente: form.obs_cliente.value.trim() });
+      gerar(id);
+    } catch (erro) { avisar(erro.message, true); }
+  };
+  pagina.onclick = (e) => {
+    const b = e.target.closest("button[data-gerar], button[data-baixar], button[data-excluir]");
+    if (!b) return;
+    if (b.dataset.gerar) gerar(Number(b.dataset.gerar));
+    else if (b.dataset.baixar) {
+      const prop = banco.carregarProposta(Number(b.dataset.baixar));
+      baixar(prop.pdf, `${nomeArquivo(`Proposta ${prop.id}${prop.cliente ? ` - ${prop.cliente}` : ""}`)}.pdf`, "application/pdf");
+    } else if (confirm(`Excluir a proposta #${b.dataset.excluir}? Os orçamentos continuam.`)) {
+      banco.excluirProposta(Number(b.dataset.excluir)); telaPropostas();
+    }
   };
 }
 
@@ -503,7 +757,7 @@ function telaMarca() {
       title="${nome}" aria-label="Tema ${nome}" style="background:${cor}"></button>`;
   pagina.innerHTML = `
     <h1>Minha marca</h1>
-    <p class="fraco">Vai no cabeçalho dos orçamentos. O que ficar vazio não aparece.</p>
+    <p class="fraco">Vai no cabeçalho dos PDFs. O <strong>nome da marca</strong> também aparece no topo do site. O que ficar vazio não aparece.</p>
     <form id="marca" class="painel"><div class="grade">
       ${Object.entries(banco.CAMPOS_MARCA).map(([k, rot]) => `<label>${rot}<input name="${k}" maxlength="120" value="${h(marca[k])}"
         placeholder="${{ instagram: "@suaimpressora3d", whatsapp: "(11) 90000-0000", site: "www.seusite.com.br", local: "São Paulo - SP" }[k] || ""}" /></label>`).join("")}
@@ -553,6 +807,7 @@ function telaMarca() {
       catch { return avisar("Não consegui abrir essa imagem. Tente salvar a logo como PNG.", true); }
     }
     banco.salvarMarca(novo);
+    atualizarCabecalho();
     banco.salvarTema(temaDoForm());  // desmarcou "usar no site" com o tema na cor da marca: volta ao roxo padrão
     aplicarTema(banco.lerTema(), novo.cor);
     avisar("Marca salva.");
@@ -598,7 +853,7 @@ function telaBackup() {
     <h2>Vai trocar de navegador ou de computador?</h2>
     <ol class="painel" style="padding-left:36px;margin:0">
       <li>Aqui, clique em <strong>Exportar meus dados</strong>.</li>
-      <li>Abra o Custos 3D no outro navegador.</li>
+      <li>Abra a Minha Calculadora 3D no outro navegador.</li>
       <li>Lá, em <strong>Exportar / importar</strong>, escolha o arquivo e clique em <strong>Importar</strong>.</li>
     </ol>
     <h2>Importar dados</h2>
@@ -606,14 +861,27 @@ function telaBackup() {
       <p><strong>Isso substitui todos os dados deste navegador</strong> pelos do arquivo.</p>
       <label>Arquivo exportado (.db)<input type="file" id="arquivo" accept=".db" /></label>
       <div class="acoes"><button id="importar">Importar</button></div>
+    </div>
+    <h2>Apagar dados</h2>
+    <div class="painel">
+      <p style="margin-top:0">Apaga tudo deste navegador: orçamentos, PDFs, vendas, propostas, filamentos, parâmetros, a marca, o tema e a pasta escolhida.
+        O site volta como novo. <strong>Não dá para desfazer</strong>: exporte antes se quiser guardar alguma coisa.</p>
+      <div class="acoes"><button class="perigo" id="apagar">Apagar todos os dados</button></div>
     </div>`;
+  $("#apagar").onclick = async () => {
+    if (!confirm("Apagar TODOS os dados deste navegador? Não dá para desfazer.")) return;
+    if ((prompt('Para confirmar, digite APAGAR') || "").trim().toUpperCase() !== "APAGAR") return avisar("Nada foi apagado.");
+    try { await banco.apagarTudo(); } catch (erro) { return avisar(`Não consegui apagar: ${erro.message}`, true); }
+    avisar("Dados apagados. O site está zerado.");
+    if (location.hash === "#/") rotear(); else location.hash = "#/";
+  };
   $("#exportar").onclick = async () => {
-    const nome = `custos3d_${new Date().toISOString().slice(0, 10)}.db`, anterior = banco.ultimaExportacao();
+    const nome = `minha-calculadora-3d_${hojeIso()}.db`, anterior = banco.ultimaExportacao();
     const bytes = banco.exportar();  // a data da exportação já vai dentro do arquivo
     if ("showSaveFilePicker" in window) {
       // Chrome/Edge: a pessoa escolhe onde salvar; se cancelar, a data volta e o lembrete continua valendo
       try {
-        const arquivo = await showSaveFilePicker({ suggestedName: nome, id: "custos3d-exportar" });
+        const arquivo = await showSaveFilePicker({ suggestedName: nome, id: "exportar-dados" });
         const escrita = await arquivo.createWritable();
         await escrita.write(bytes);
         await escrita.close();
@@ -639,15 +907,24 @@ function telaBackup() {
 }
 
 // ================================================================= rotas
+/** O nome da marca da pessoa no topo do site, depois do nome do app. */
+function atualizarCabecalho() {
+  const nome = banco.lerMarca().nome;
+  $("#nome-marca").textContent = nome || "";
+  document.title = nome ? `${nome} · Minha Calculadora 3D` : "Minha Calculadora 3D";
+}
+
 function rotear() {
   pagina.onchange = pagina.onclick = null;  // cada tela liga os seus
   aplicarTema(banco.lerTema(), banco.lerMarca().cor);  // o salvo: desfaz prévia não salva e vale após importar
+  atualizarCabecalho();
   const [, rota, id] = location.hash.split("/");
-  const telas = { "": telaOrcamentos, orcamento: () => telaOrcamento(Number(id)), filamentos: telaFilamentos,
+  const telas = { "": telaInicio, orcamentos: telaOrcamentos, orcamento: () => telaOrcamento(Number(id)),
+                  propostas: telaPropostas, vendas: telaVendas, filamentos: telaFilamentos,
                   parametros: telaParametros, marca: telaMarca, backup: telaBackup };
-  document.querySelectorAll("nav a").forEach((a) =>
-    a.classList.toggle("ativo", a.getAttribute("href") === `#/${rota === "orcamento" ? "" : rota || ""}`));
-  (telas[rota || ""] || telaOrcamentos)();
+  const menu = rota === "orcamento" ? "orcamentos" : rota || "";
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("ativo", a.getAttribute("href") === `#/${menu}`));
+  (telas[rota || ""] || telaInicio)();
   scrollTo(0, 0);
 }
 

@@ -136,7 +136,7 @@ export const CAMPOS_ORCAMENTO = ["nome", "embalagem_id", "unidades", "perc_lucro
   "marketplace", "vendedor", "qtd_pedido"];
 export const CAMPOS_MARCA = { nome: "Nome da marca", documento: "CNPJ ou CPF", instagram: "Instagram",
   whatsapp: "WhatsApp / telefone", email: "E-mail", site: "Site", local: "Cidade / endereço" };
-export const COR_PADRAO = "#621DA6";
+export const COR_PADRAO = "#374151";  // cinza escuro: o PDF sai neutro até a pessoa escolher a cor dela
 
 let SQL, db, timer, conexao, avisouFalha = false;
 // Outra aba gravou: esta recarrega para não gravar por cima com dados velhos (se não tiver nada pendente)
@@ -267,7 +267,7 @@ export const salvarParametros = (p) => Object.entries(p).forEach(([k, v]) => gra
 export function lerMarca() {
   const salvos = Object.fromEntries(linhas("SELECT chave, valor FROM parametros WHERE substr(chave, 1, 6) = 'marca_'")
     .map((r) => [r.chave.slice(6), r.valor]));
-  return { ...Object.fromEntries(Object.keys(CAMPOS_MARCA).map((k) => [k, ""])), logo: null, ...salvos,
+  return { ...Object.fromEntries(Object.keys(CAMPOS_MARCA).map((k) => [k, ""])), logo: null, fonte: "Helvetica", ...salvos,
            cor: ehHex(salvos.cor) ? salvos.cor : COR_PADRAO };  // a cor vai em style= e no PDF: só hex
 }
 /** logo: null apaga a logo. */

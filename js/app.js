@@ -4,8 +4,8 @@ import * as banco from "./banco.js";
 import { brl, composicao, dataBR, horas, num, valorDificuldade } from "./custos.js";
 import { nomeDaCor } from "./cores.js";
 import { ArquivoNaoFatiado, ler3mf, sha1 } from "./leitor3mf.js";
-import { pdfCliente, pdfExemplo, pdfInterno, pdfProposta } from "./pdf.js";
-import { TEMAS, aplicarTema } from "./tema.js";
+import { FONTES, carregarFonte, pdfCliente, pdfExemplo, pdfInterno, pdfProposta } from "./pdf.js";
+import { TEMAS, TEMA_PADRAO, aplicarTema } from "./tema.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const pagina = $("#pagina");
@@ -23,6 +23,12 @@ function baixar(bytes, nome, tipo) {
   a.click();
 }
 const nomeArquivo = (t) => t.replace(/[\\/:*?"<>|]/g, "").trim();
+
+/** A marca com a fonte do PDF já baixada. Sem internet, avisa e o PDF sai em Helvetica. */
+async function marcaComFonte(marca = banco.lerMarca()) {
+  try { await carregarFonte(marca.fonte); } catch { avisar("Não consegui baixar a fonte do PDF; ele sai em Helvetica.", true); }
+  return marca;
+}
 
 function avisar(texto, erro = false) {
   const div = Object.assign(document.createElement("div"), { textContent: texto, className: erro ? "erro" : "" });
@@ -344,23 +350,25 @@ function telaOrcamento(id) {
         </div>
         ${orc.pdf_em ? `<p class="ajuda">Último PDF em ${h(dataBR(orc.pdf_em))} ${h(orc.pdf_em.slice(11, 16))}.</p>` : ""}
       </div></div>`;
-    $("#gerar").onclick = () => {
+    $("#gerar").onclick = async () => {
+      const marca = await marcaComFonte();
       let pdf;
-      try { pdf = pdfCliente(orc, r, banco.lerMarca()); }
+      try { pdf = pdfCliente(orc, r, marca); }
       catch (erro) { return avisar(`Não consegui gerar o PDF: ${erro.message}. Confira a internet (o gerador vem do CDN) ou a logo.`, true); }
       banco.salvarPdf(orc.id, pdf, r.preco);
       baixar(pdf, `${nomeArquivo(`Orçamento ${orc.id} - ${orc.nome}`)}.pdf`, "application/pdf");
       orc = banco.carregarOrcamento(id);
       mostrarCusto();
     };
-    $("#interno").onclick = () => {
+    $("#interno").onclick = async () => {
+      const marca = await marcaComFonte();
       const indices = new Set(banco.placasIncluidas(orc).map((pl) => pl.indice));
       const filamentos = orc.linhas.filter((l) => indices.has(l.placa))
         .map((l) => [l.placa, corSegura(l.cor_hex), l.tipo || "", l.gramas, l.rolo_id != null ? rotulos[l.rolo_id] || "-" : "Preço padrão"]);
       const emb = embalagens.find((e) => e.id === orc.embalagem_id);
       const situacao = travado ? `Impresso em ${dataBR(orc.impresso_em)}` : "Em aberto";
       try {
-        const pdf = pdfInterno(orc, r, pp, filamentos, emb ? `${emb.nome} (${brl(emb.custo)})` : "Sem embalagem", situacao, banco.lerMarca());
+        const pdf = pdfInterno(orc, r, pp, filamentos, emb ? `${emb.nome} (${brl(emb.custo)})` : "Sem embalagem", situacao, marca);
         baixar(pdf, `${nomeArquivo(`Orçamento ${orc.id} - ${orc.nome}`)} (interno).pdf`, "application/pdf");
       } catch (erro) { avisar(`Não consegui gerar o PDF: ${erro.message}`, true); }
     };
@@ -636,8 +644,8 @@ function telaPropostas() {
       <div class="acoes"><button class="primario">Criar e gerar PDF</button></div></form>`
       : `<p class="painel">Importe arquivos em <a href="#/orcamentos">Orçamentos</a> para montar uma proposta.</p>`}`;
 
-  const gerar = (id) => {
-    const prop = banco.carregarProposta(id), marca = banco.lerMarca(), itens = [];
+  const gerar = async (id) => {
+    const prop = banco.carregarProposta(id), marca = await marcaComFonte(), itens = [];
     for (const oid of prop.orcamentos) {
       const orc = banco.carregarOrcamento(oid);
       if (!orc) return avisar(`O orçamento #${oid} desta proposta foi excluído. Crie a proposta de novo.`, true);
@@ -751,8 +759,6 @@ function telaParametros() {
 function telaMarca() {
   const marca = banco.lerMarca();
   let tema = banco.lerTema();
-  let exemplo = "";
-  try { exemplo = urlDe(pdfExemplo(marca), "application/pdf"); } catch { /* sem jsPDF (CDN fora) ou logo inválida: tela segue sem prévia */ }
   const amostra = (cor, nome) => `<button type="button" class="amostra" data-cor="${cor}" aria-pressed="${tema.cor === cor}"
       title="${nome}" aria-label="Tema ${nome}" style="background:${cor}"></button>`;
   pagina.innerHTML = `
@@ -762,6 +768,8 @@ function telaMarca() {
       ${Object.entries(banco.CAMPOS_MARCA).map(([k, rot]) => `<label>${rot}<input name="${k}" maxlength="120" value="${h(marca[k])}"
         placeholder="${{ instagram: "@suaimpressora3d", whatsapp: "(11) 90000-0000", site: "www.seusite.com.br", local: "São Paulo - SP" }[k] || ""}" /></label>`).join("")}
       <label>Cor do PDF<input name="cor" type="color" value="${h(marca.cor)}" /><span class="ajuda">Títulos, linha do cabeçalho e topo das tabelas.</span></label>
+      <label>Fonte do PDF<select name="fonte">${Object.keys(FONTES).map((f) => `<option ${f === marca.fonte ? "selected" : ""}>${f}</option>`).join("")}</select>
+        <span class="ajuda">Fontes do Google Fonts. A prévia lá embaixo mostra como fica.</span></label>
       <label>Logo (PNG ou JPG)<input name="logo" type="file" accept="image/png,image/jpeg" /><span class="ajuda">Prefira fundo transparente ou branco.</span></label>
       <label class="caixa"><input type="checkbox" name="no_site" ${tema.cor === "marca" ? "checked" : ""} /> Usar a cor da marca também no site</label>
       ${marca.logo ? `<label class="caixa"><input type="checkbox" name="tirar" /> Tirar a logo atual</label>` : ""}
@@ -785,21 +793,34 @@ function telaMarca() {
 
     <h2>Como fica o PDF</h2>
     <p class="ajuda">Um orçamento de exemplo com a sua marca. Orçamentos já enviados mudam só quando você gerar o PDF de novo.</p>
-    ${exemplo ? `<iframe class="pdf" src="${exemplo}" title="PDF de exemplo"></iframe>
-    <div class="acoes"><a class="botao" href="${exemplo}" download="Exemplo de orçamento.pdf">Baixar PDF de exemplo</a></div>`
-      : `<p class="alerta">Não consegui montar o PDF de exemplo. Confira a internet ou troque a logo.</p>`}`;
+    <div id="previa"><p class="ajuda">Montando o PDF de exemplo…</p></div>`;
+
+  // Prévia do PDF com o que está no formulário (cor e fonte), antes de salvar
+  const mostrarPrevia = async () => {
+    const el = $("#previa");
+    const m = await marcaComFonte({ ...marca, cor: form.cor.value, fonte: form.fonte.value });
+    if (!el.isConnected) return;
+    try {
+      const url = urlDe(pdfExemplo(m), "application/pdf");
+      el.innerHTML = `<iframe class="pdf" src="${url}" title="PDF de exemplo"></iframe>
+        <div class="acoes"><a class="botao" href="${url}" download="Exemplo de orçamento.pdf">Baixar PDF de exemplo</a></div>`;
+    } catch { el.innerHTML = `<p class="alerta">Não consegui montar o PDF de exemplo. Confira a internet ou troque a logo.</p>`; }
+  };
 
   const form = $("#marca");
   // O site mostra na hora como fica, com a mesma regra de "Salvar marca", sem gravar nada (nem o cache do <head>)
   const temaDoForm = () => (form.no_site.checked ? { ...tema, cor: "marca" }
-    : tema.cor === "marca" ? { ...tema, cor: TEMAS.Roxo } : tema);
+    : tema.cor === "marca" ? { ...tema, cor: TEMA_PADRAO.cor } : tema);
   const previa = () => aplicarTema(temaDoForm(), form.cor.value, false);
   form.cor.oninput = previa;
+  form.cor.onchange = mostrarPrevia;
+  form.fonte.onchange = mostrarPrevia;
   form.no_site.onchange = previa;
+  mostrarPrevia();
 
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const novo = { cor: form.cor.value };
+    const novo = { cor: form.cor.value, fonte: form.fonte.value };
     for (const k of Object.keys(banco.CAMPOS_MARCA)) novo[k] = form[k].value.trim();
     if (form.tirar?.checked) novo.logo = null;
     if (form.logo.files[0]) {
@@ -808,7 +829,7 @@ function telaMarca() {
     }
     banco.salvarMarca(novo);
     atualizarCabecalho();
-    banco.salvarTema(temaDoForm());  // desmarcou "usar no site" com o tema na cor da marca: volta ao roxo padrão
+    banco.salvarTema(temaDoForm());  // desmarcou "usar no site" com o tema na cor da marca: volta ao tema padrão
     aplicarTema(banco.lerTema(), novo.cor);
     avisar("Marca salva.");
     telaMarca();
@@ -907,10 +928,19 @@ function telaBackup() {
 }
 
 // ================================================================= rotas
-/** O nome da marca da pessoa no topo do site, depois do nome do app. */
+/** Topo do site: logo da pessoa, nome da marca e depois "Minha Calculadora 3D". A logo também vira o ícone da aba. */
+const ICONE_PADRAO = document.querySelector("link[rel=icon]").href;
+let logoAtual = null;
 function atualizarCabecalho() {
-  const nome = banco.lerMarca().nome;
+  const { nome, logo } = banco.lerMarca();
   $("#nome-marca").textContent = nome || "";
+  if (logo !== logoAtual) {  // só recria a imagem quando a logo muda
+    logoAtual = logo;
+    const img = $("#logo-marca");
+    img.hidden = !logo;
+    img.src = logo ? urlDe(logo) : "";
+    document.querySelector("link[rel=icon]").href = logo ? img.src : ICONE_PADRAO;
+  }
   document.title = nome ? `${nome} · Minha Calculadora 3D` : "Minha Calculadora 3D";
 }
 

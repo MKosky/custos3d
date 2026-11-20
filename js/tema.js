@@ -3,10 +3,10 @@
 // até amarelo ou branco.
 
 export const TEMAS = {
-  Roxo: "#8B52D6", Azul: "#2F6FDB", Verde: "#1E9E6A", Laranja: "#E8772E",
-  Rosa: "#D64F8F", Vermelho: "#D9443C", Grafite: "#6B7280",
+  Grafite: "#6B7280", Roxo: "#8B52D6", Azul: "#2F6FDB", Verde: "#1E9E6A", Laranja: "#E8772E",
+  Rosa: "#D64F8F", Vermelho: "#D9443C",
 };
-export const TEMA_PADRAO = { modo: "auto", cor: TEMAS.Roxo };  // cor: um hex ou "marca" (segue a cor do PDF)
+export const TEMA_PADRAO = { modo: "escuro", cor: TEMAS.Grafite };  // cor: um hex ou "marca" (segue a cor do PDF)
 const CHAVE_LOCAL = "custos3d-tema";
 
 // ---------------------------------------------------------------- conversões de cor

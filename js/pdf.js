@@ -18,13 +18,44 @@ function cores(hex) {
            linha: cor.map((c) => Math.round(c + (255 - c) * 0.8)) };
 }
 
-/** Linhas da faixa de contatos: nome e documento, redes, cidade. O que está vazio não aparece. */
+/** Linhas da faixa de contatos: documento, redes, cidade (o nome vai ao lado da logo). O que está vazio não aparece. */
 export function contatos(marca) {
   const m = Object.fromEntries(Object.keys(CAMPOS_MARCA).map((k) => [k, t(marca[k])]));
   if (m.instagram && !/^(@|http)/.test(m.instagram)) m.instagram = "@" + m.instagram;
   const redes = [["Instagram", "instagram"], ["WhatsApp", "whatsapp"], ["E-mail", "email"], ["Site", "site"]]
     .filter(([, c]) => m[c]).map(([r, c]) => `${r}: ${m[c]}`);
-  return [[m.nome, m.documento].filter(Boolean).join("  ·  "), redes.join("  ·  "), m.local].filter(Boolean);
+  return [m.documento, redes.join("  ·  "), m.local].filter(Boolean);
+}
+
+// ---------------------------------------------------------------- fontes do Google para o PDF
+// O jsPDF só embute TTF; o pacote @expo-google-fonts traz os TTF estáticos (regular e negrito) de cada família.
+const BASE = "https://cdn.jsdelivr.net/npm/@expo-google-fonts";
+export const FONTES = {
+  Helvetica: null,  // embutida no leitor de PDF: não baixa nada
+  Roboto: "roboto@0.4.3/Roboto", "Open Sans": "open-sans@0.4.2/OpenSans", Inter: "inter@0.4.2/Inter",
+  Lato: "lato@0.4.1/Lato", Montserrat: "montserrat@0.4.2/Montserrat", Poppins: "poppins@0.4.1/Poppins",
+  Nunito: "nunito@0.4.2/Nunito", Raleway: "raleway@0.4.2/Raleway",
+  Merriweather: "merriweather@0.4.2/Merriweather", "Playfair Display": "playfair-display@0.4.2/PlayfairDisplay",
+};
+const baixadas = {};  // nome -> {normal, bold} em base64, uma vez por visita
+
+async function base64(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`não consegui baixar a fonte (${resp.status})`);
+  const b = new Uint8Array(await resp.arrayBuffer());
+  let txt = "";
+  for (let i = 0; i < b.length; i += 0x8000) txt += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(txt);
+}
+
+/** Baixa a fonte escolhida antes de gerar o PDF. Sem internet, o PDF sai em Helvetica. */
+export async function carregarFonte(nome) {
+  const caminho = FONTES[nome];
+  if (!caminho || baixadas[nome]) return;
+  const [pacote, prefixo] = [caminho.slice(0, caminho.lastIndexOf("/")), caminho.slice(caminho.lastIndexOf("/") + 1)];
+  const [normal, bold] = await Promise.all([
+    base64(`${BASE}/${pacote}/400Regular/${prefixo}_400Regular.ttf`), base64(`${BASE}/${pacote}/700Bold/${prefixo}_700Bold.ttf`)]);
+  baixadas[nome] = { normal, bold };
 }
 
 // A fonte do PDF (Helvetica) só desenha o alfabeto latino: chinês e emoji viravam lixo ("‡N[P_ S c o r p i o n").
@@ -36,39 +67,50 @@ const dias = (n) => `${n} ${Number(n) === 1 ? "dia" : "dias"}`;
 const hoje = (somar = 0) => new Date(Date.now() + somar * 864e5).toLocaleDateString("pt-BR");
 const bytes = (doc) => new Uint8Array(doc.output("arraybuffer"));
 
-/** Folha nova com o cabeçalho da marca. paraCliente = mostra a faixa de contatos. Devolve [doc, cores, y]. */
+/** Folha nova com o cabeçalho da marca: logo, nome ao lado, título e data à direita.
+ *  paraCliente = mostra a faixa de contatos. Devolve [doc, cores, y]. */
 function novo(marca, titulo, paraCliente = true) {
   const doc = new jspdf.jsPDF({ format: "a4", unit: "mm" });
-  const c = cores(marca.cor || "#621DA6");
-  let faixa = paraCliente ? contatos(marca) : [];
-  const nomeEmNegrito = !!(marca.logo && marca.nome);
+  doc.familia = "helvetica";
+  const fonte = baixadas[marca.fonte];
+  if (fonte) {
+    for (const estilo of ["normal", "bold"]) {
+      doc.addFileToVFS(`${marca.fonte}-${estilo}.ttf`, fonte[estilo]);
+      doc.addFont(`${marca.fonte}-${estilo}.ttf`, marca.fonte, estilo);
+    }
+    doc.familia = marca.fonte;
+  }
+  const c = cores(marca.cor || "#374151");
+  let x = X0;
   if (marca.logo) {
     const { width, height } = doc.getImageProperties(marca.logo);
-    const h = Math.min(20, (80 * height) / width);   // cabe em 80 x 20 mm, alinhada à esquerda
-    doc.addImage(marca.logo, "PNG", X0, 12 + (20 - h) / 2, (h * width) / height, h);
-  } else if (marca.nome) {                            // sem logo, o nome ocupa o lugar dela e sai da faixa
-    doc.setFont("helvetica", "bold").setFontSize(18).setTextColor(...c.texto).text(t(marca.nome), X0, 22);
-    if (faixa.length) faixa = [t(marca.documento), ...faixa.slice(1)].filter(Boolean);
+    const [w, h] = (40 * height) / width <= 20 ? [40, (40 * height) / width] : [(20 * width) / height, 20];  // cabe em 40 x 20 mm
+    doc.addImage(marca.logo, "PNG", X0, 12 + (20 - h) / 2, w, h);
+    x = X0 + w + 5;
   }
-  doc.setFont("helvetica", "bold").setFontSize(16).setTextColor(...c.texto).text(titulo, X1, 21, { align: "right" });
-  doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(...CINZA).text(hoje(), X1, 27, { align: "right" });
+  if (marca.nome) {
+    doc.setFont(doc.familia, "bold").setFontSize(marca.logo ? 16 : 18).setTextColor(...c.texto)
+      .text(doc.splitTextToSize(t(marca.nome), 112 - x)[0], x, 23.5);
+  }
+  doc.setFont(doc.familia, "bold").setFontSize(16).setTextColor(...c.texto).text(titulo, X1, 21, { align: "right" });
+  doc.setFont(doc.familia, "normal").setFontSize(10).setTextColor(...CINZA).text(hoje(), X1, 27, { align: "right" });
   doc.setDrawColor(...c.cor).setLineWidth(0.6).line(X0, 36, X1, 36);
   let y = 41.5;
-  faixa.forEach((linha, i) => {
-    doc.setFont("helvetica", i === 0 && nomeEmNegrito ? "bold" : "normal").setFontSize(9).setTextColor(...CINZA);
+  for (const linha of paraCliente ? contatos(marca) : []) {
+    doc.setFont(doc.familia, "normal").setFontSize(9).setTextColor(...CINZA);
     for (const parte of doc.splitTextToSize(linha, X1 - X0)) { doc.text(parte, X0, y); y += 4.5; }
-  });
+  }
   return [doc, c, y + 6];
 }
 
 function secao(doc, titulo, y, c) {
   if (y > 250) { doc.addPage(); y = X0; }
-  doc.setFont("helvetica", "bold").setFontSize(12).setTextColor(...c.texto).text(titulo, X0, y + 6);
+  doc.setFont(doc.familia, "bold").setFontSize(12).setTextColor(...c.texto).text(titulo, X0, y + 6);
   return y + 11;
 }
 
 function texto(doc, txt, y) {
-  doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(0, 0, 0);
+  doc.setFont(doc.familia, "normal").setFontSize(10).setTextColor(0, 0, 0);
   for (const parte of doc.splitTextToSize(t(txt), X1 - X0)) {
     if (y > 280) { doc.addPage(); y = X0; }
     doc.text(parte, X0, y); y += 5;
@@ -81,7 +123,7 @@ function tabela(doc, y, c, cabecalho, linhas, { alinhar = [], larguras = {}, neg
   const halign = (i) => ({ c: "center", r: "right" }[alinhar[i]] || "left");
   doc.autoTable({
     startY: y, margin: { left: X0, right: 210 - X1 }, theme: "plain", head: [cabecalho], body: linhas.map((l) => l.map(t)),
-    styles: { font: "helvetica", fontSize: 10, cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 },
+    styles: { font: doc.familia, fontSize: 10, cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 },
               lineColor: c.linha, lineWidth: { bottom: 0.2 }, valign: "middle" },
     headStyles: { fillColor: c.cor, textColor: c.cabecalho, fontStyle: "bold" },
     columnStyles: Object.fromEntries(cabecalho.map((_, i) => [i, { halign: halign(i), ...(larguras[i] ? { cellWidth: larguras[i] } : {}) }])),
@@ -104,11 +146,11 @@ function produto(doc, y, orc, detalhes) {
     doc.addImage(orc.capa, "PNG", X0, y, w, h);
     x = X0 + 56; alturaFoto = h;
   }
-  doc.setFont("helvetica", "bold").setFontSize(15).setTextColor(0, 0, 0);
+  doc.setFont(doc.familia, "bold").setFontSize(15).setTextColor(0, 0, 0);
   const nome = doc.splitTextToSize(t(orc.nome), X1 - x);
   doc.text(nome, x, y + 5.5);
   let yTexto = y + 5.5 + nome.length * 7;
-  doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(...CINZA);
+  doc.setFont(doc.familia, "normal").setFontSize(10).setTextColor(...CINZA);
   for (const d of detalhes) for (const parte of doc.splitTextToSize(t(d), X1 - x)) { doc.text(parte, x, yTexto); yTexto += 5; }
   return Math.max(yTexto, y + alturaFoto) + 8;
 }
@@ -128,15 +170,15 @@ function condicoes(d) {
 /** Total, condições e observações para o cliente: igual no orçamento e na proposta. */
 function fechamento(doc, y, c, total, d) {
   y += 7;
-  doc.setFont("helvetica", "bold").setFontSize(14).setTextColor(...c.texto).text(`Total: ${brl(total)}`, X1, y, { align: "right" });
+  doc.setFont(doc.familia, "bold").setFontSize(14).setTextColor(...c.texto).text(`Total: ${brl(total)}`, X1, y, { align: "right" });
   y += 5;
   const itens = condicoes(d);
   if (itens.length) {
     y = secao(doc, "Condições", y, c);
     for (const [rotulo, valor] of itens) {
-      doc.setFont("helvetica", "bold").setFontSize(10).setTextColor(0, 0, 0).text(`${rotulo}:`, X0, y);
+      doc.setFont(doc.familia, "bold").setFontSize(10).setTextColor(0, 0, 0).text(`${rotulo}:`, X0, y);
       const largura = doc.getTextWidth(`${rotulo}: `);  // medida ainda em negrito
-      doc.setFont("helvetica", "normal").text(valor, X0 + largura, y);
+      doc.setFont(doc.familia, "normal").text(valor, X0 + largura, y);
       y += 6;
     }
   }
@@ -160,7 +202,7 @@ export function pdfProposta(prop, itens, marca) {
   let [doc, c, y] = novo(marca, `Proposta #${prop.id}`);
   const cliente = linhaCliente(prop);
   if (cliente) {
-    doc.setFont("helvetica", "normal").setFontSize(11).setTextColor(...CINZA).text(t(cliente), X0, y);
+    doc.setFont(doc.familia, "normal").setFontSize(11).setTextColor(...CINZA).text(t(cliente), X0, y);
     y += 6;
   }
   const fotos = itens.map(([o]) => o.capa);
